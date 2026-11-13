@@ -1,0 +1,21 @@
+{
+  "services": [
+    {
+      "type": "web",
+      "name": "jarvis-telegram-bot",
+      "runtime": "docker",
+      "dockerfilePath": "./Dockerfile",
+      "plan": "free",
+      "envVars": [
+        { "key": "API_ID", "sync": false },
+        { "key": "API_HASH", "sync": false },
+        { "key": "GEMINI_API_KEY", "sync": false },
+        { "key": "BOT_TOKEN", "sync": false },
+        { "key": "TELEGRAM_SESSION", "sync": false },
+        { "key": "BOT_SESSION", "sync": false },
+        { "key": "GEMINI_MODEL", "value": "gemini-3.5-flash" },
+        { "key": "RENDER", "value": "true" }
+      ]
+    }
+  ]
+}

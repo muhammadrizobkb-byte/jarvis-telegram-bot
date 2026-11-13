@@ -1,0 +1,16 @@
+.env
+.env.txt
+*.session
+*.session-journal
+__pycache__/
+*.pyc
+mijozlar_fayllari/
+bot_settings.json
+ad_leads.json
+start.bat
+start_24_7.bat
+run_silent_24_7.vbs
+test_gemini.py
+export_*.py
+*.log
+.git/

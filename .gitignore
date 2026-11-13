@@ -1,0 +1,23 @@
+# Secrets - NEVER push these
+.env
+*.session
+
+# Data & logs
+ad_leads.json
+bot_settings.json
+bot_24_7.log
+mijozlar_fayllari/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Windows scripts (local only)
+run_silent_24_7.vbs
+start.bat
+start_24_7.bat
+
+# Old platform configs
+vercel.json
+railway.toml
