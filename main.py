@@ -492,6 +492,14 @@ def scrape_google_maps_no_website(query: str = "restoran", max_results: int = 5,
     opts.add_argument("--disable-gpu")
     opts.add_argument("--window-size=1280,800")
     opts.add_argument("--lang=en")
+    # ⚡ 10x Tezlashtirish: Rasm, shrift va keraksiz og'ir resurslarni bloklash
+    opts.add_argument("--blink-settings=imagesEnabled=false")
+    opts.add_argument("--disable-remote-fonts")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-notifications")
+    opts.add_argument("--disable-background-networking")
+    opts.add_argument("--disk-cache-size=1")
+    opts.page_load_strategy = "eager"  # DOMContentLoaded tayyor bo'lishi bilan ishlaydi
 
     chrome_bin = os.getenv("CHROME_BIN") or next(
         (p for p in ("/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome") if os.path.exists(p)),
@@ -540,13 +548,13 @@ def scrape_google_maps_no_website(query: str = "restoran", max_results: int = 5,
             except Exception:
                 continue
 
-            # Ro'yxatni pastga tushirib ko'proq joylarni yuklash
-            scroll_rounds = 4 if total_cats == 1 else 2
+            # 🔍 Deep Search: Ro'yxatni pastga chuqur aylantirib ko'proq joylarni yuklash
+            scroll_rounds = 10 if total_cats <= 2 else 6
             try:
                 feed = driver.find_element(By.CSS_SELECTOR, "div[role='feed']")
                 for _ in range(scroll_rounds):
                     driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", feed)
-                    time.sleep(1.2)
+                    time.sleep(0.7)
             except Exception:
                 pass
 
@@ -558,7 +566,8 @@ def scrape_google_maps_no_website(query: str = "restoran", max_results: int = 5,
                 if name and href and href not in seen_urls:
                     seen_urls.add(href)
                     candidates.append((name, href))
-                if len(candidates) >= cat_limit * 4:
+                # 🔍 Deep Search: ko'proq biznes nomzodlarini to'plash
+                if len(candidates) >= max(30, cat_limit * 8):
                     break
 
             cat_found = 0
@@ -572,8 +581,11 @@ def scrape_google_maps_no_website(query: str = "restoran", max_results: int = 5,
 
                 driver.get(href)
                 try:
-                    WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1")))
-                    time.sleep(0.8)
+                    # ⚡ Tezkor kutish: h1 yoki telefon bloki chiqishi bilan darhol o'qish (4s o'rniga 2.5s)
+                    WebDriverWait(driver, 2.5).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "h1, [data-item-id^='phone:tel:']"))
+                    )
+                    time.sleep(0.2)
                 except Exception:
                     continue
 
