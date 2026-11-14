@@ -205,6 +205,45 @@ def register_bot_handlers(bot_client, user_client, ctx: dict):
         if text == "/start":
             return
 
+        # Slash buyruqlarni to'liq qo'llab-quvvatlash
+        cmd = text.split()[0].lower() if text.startswith("/") else ""
+        if cmd == "/reklama":
+            user_state["mode"] = None
+            await _show_category_picker(event, is_edit=False)
+            return
+        if cmd in ("/mijozlar", "/crm"):
+            user_state["mode"] = None
+            await _show_crm_list(event, filter_type="all", page=0, is_edit=False)
+            return
+        if cmd in ("/status", "/statistika"):
+            user_state["mode"] = None
+            await _show_stats_screen(event, is_edit=False)
+            return
+        if cmd in ("/sozlamalar", "/settings"):
+            user_state["mode"] = None
+            await _show_settings_screen(event, is_edit=False)
+            return
+        if cmd == "/stop":
+            if config_state.get("campaign_running"):
+                config_state["campaign_running"] = False
+                await event.respond("🛑 **Reklama qidiruvi to'xtatildi!**")
+            else:
+                await event.respond("ℹ️ Hozirda faol qidiruv yoki reklama ishlamayapti.")
+            return
+        if cmd in ("/help", "/yordam"):
+            help_text = (
+                "ℹ️ **JARVIS Boshqaruv Boti Buyruqlari:**\n\n"
+                "🔹 `/start` — Boshqaruv paneli va statistika\n"
+                "🔹 `/reklama` — Google Maps'dan yangi mijozlar qidirish\n"
+                "🔹 `/mijozlar` — Topilgan mijozlar CRM bazasi\n"
+                "🔹 `/status` — Tizim va server holati\n"
+                "🔹 `/sozlamalar` — Qidiruv hududi va oraliq vaqtlar\n"
+                "🔹 `/stop` — Jarayondagi qidiruvni to'xtatish\n\n"
+                "💡 Shuningdek, pastki menyu tugmalari orqali ham barchasini 1 bosishda boshqarishingiz mumkin!"
+            )
+            await event.respond(help_text)
+            return
+
         # Pastki doimiy Reply Keyboard tugmalarini tekshirish
         if text in ("📢 Reklama", "🗺️ Avto-Reklama"):
             user_state["mode"] = None

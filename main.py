@@ -523,6 +523,18 @@ def scrape_google_maps_no_website(query: str = "restoran", max_results: int = 5,
     ]
 
     try:
+        # 🍪 Google Cookie Consent bypass (Yevropa / Render serverlari uchun)
+        try:
+            driver.get("https://www.google.com/robots.txt")
+            driver.add_cookie({
+                "name": "SOCS",
+                "value": "CAISHAgBEhJnd3NfMjAyNDA4MDgtMF9SQzEaAmVuIAEaBgiA_LyaBg",
+                "domain": ".google.com",
+                "path": "/"
+            })
+        except Exception:
+            pass
+
         total_cats = len(sub_queries)
         for cat_idx, sub_q in enumerate(sub_queries):
             if len(found_targets) >= max_results:
@@ -535,16 +547,29 @@ def scrape_google_maps_no_website(query: str = "restoran", max_results: int = 5,
             has_city = any(loc in sub_q.lower() for loc in LOCATION_HINTS)
             encoded_q = quote_plus(sub_q)
             if has_city:
-                url = f"https://www.google.com/maps/search/{encoded_q}"
+                url = f"https://www.google.com/maps/search/{encoded_q}?hl=en"
             else:
                 cur_lat = float(config_state.get("lat", DEFAULT_LAT))
                 cur_lon = float(config_state.get("lon", DEFAULT_LON))
-                url = f"https://www.google.com/maps/search/{encoded_q}/@{cur_lat},{cur_lon},13z"
+                url = f"https://www.google.com/maps/search/{encoded_q}/@{cur_lat},{cur_lon},13z?hl=en"
 
             driver.get(url)
+
+            # Agar consent sahifasiga o'tib ketgan bo'lsa, 'Accept all' tugmasini bosish
+            if "consent.google" in driver.current_url:
+                try:
+                    for b in driver.find_elements(By.CSS_SELECTOR, "button"):
+                        t = (b.text or "").lower()
+                        if any(w in t for w in ["accept", "agree", "alle akzeptieren", "zustimmen", "принять"]):
+                            driver.execute_script("arguments[0].click();", b)
+                            time.sleep(1.5)
+                            break
+                except Exception:
+                    pass
+
             try:
-                wait = WebDriverWait(driver, 10)
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a.hfpxzc")))
+                wait = WebDriverWait(driver, 8)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a.hfpxzc, a[href*='/maps/place/'], div.Nv2PK, h1")))
             except Exception:
                 continue
 
@@ -558,17 +583,28 @@ def scrape_google_maps_no_website(query: str = "restoran", max_results: int = 5,
             except Exception:
                 pass
 
-            items = driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
+            items = driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc, a[href*='/maps/place/']")
             candidates = []
             for item in items:
                 name = item.get_attribute("aria-label")
                 href = item.get_attribute("href")
-                if name and href and href not in seen_urls:
+                if not name or not href:
+                    continue
+                if href not in seen_urls:
                     seen_urls.add(href)
                     candidates.append((name, href))
                 # 🔍 Deep Search: ko'proq biznes nomzodlarini to'plash
                 if len(candidates) >= max(30, cat_limit * 8):
                     break
+
+            # Agar to'g'ridan-to'g'ri bitta joy ochilgan bo'lsa
+            if "/maps/place/" in driver.current_url and not candidates:
+                try:
+                    h1_els = driver.find_elements(By.CSS_SELECTOR, "h1")
+                    if h1_els:
+                        candidates.append((h1_els[0].text, driver.current_url))
+                except Exception:
+                    pass
 
             cat_found = 0
             for name, href in candidates:
@@ -1719,6 +1755,26 @@ async def start_controller_bot(token: str, me):
     )
     await bot_client.start(bot_token=token)
     bot_me = await bot_client.get_me()
+
+    # Telegram Bot Commands menyusini o'rnatish ('/' bosganda barcha buyruqlar avtomatik ko'rinadi)
+    try:
+        from telethon.tl.functions.bots import SetBotCommandsRequest
+        from telethon.tl.types import BotCommand, BotCommandScopeDefault
+        await bot_client(SetBotCommandsRequest(
+            scope=BotCommandScopeDefault(),
+            lang_code="",
+            commands=[
+                BotCommand(command="start", description="🚀 Asosiy boshqaruv paneli"),
+                BotCommand(command="reklama", description="📢 Google Maps qidiruv & reklama"),
+                BotCommand(command="mijozlar", description="👥 Mijozlar CRM bazasi"),
+                BotCommand(command="status", description="📊 Tizim va server holati"),
+                BotCommand(command="sozlamalar", description="⚙️ Hudud va oraliq sozlamalari"),
+                BotCommand(command="stop", description="🛑 Faol qidiruvni to'xtatish"),
+                BotCommand(command="help", description="❓ Botdan foydalanish qo'llanmasi"),
+            ]
+        ))
+    except Exception as _e:
+        log_event("⚠️ BOT COMMANDS", getattr(bot_me, "username", "Bot"), "[yellow]WARN[/yellow]", str(_e))
 
     ctx = {
         "owner_id": me.id,
