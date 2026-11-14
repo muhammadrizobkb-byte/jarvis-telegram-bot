@@ -230,6 +230,86 @@ def register_bot_handlers(bot_client, user_client, ctx: dict):
             else:
                 await event.respond("ℹ️ Hozirda faol qidiruv yoki reklama ishlamayapti.")
             return
+        if cmd in ("/export", "/eksport", "/csv"):
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["#", "Ism / Biznes", "Telefon / Kontakt", "Sana", "Holati", "Soha", "Tushuntirilganmi"])
+            idx = 1
+            for cid, lead_data in ad_leads.items():
+                if cid == "contacted_phones" or not isinstance(lead_data, dict):
+                    continue
+                status_str = "Rozi bo'lgan 🔥" if lead_data.get("agreed") else ("Tushuntirilgan 💡" if lead_data.get("details_explained") else "Yuborilgan ⏳")
+                writer.writerow([
+                    idx,
+                    lead_data.get("title", ""),
+                    lead_data.get("target", cid),
+                    lead_data.get("sent_time", ""),
+                    status_str,
+                    lead_data.get("category", ""),
+                    "Ha" if lead_data.get("details_explained") else "Yo'q"
+                ])
+                idx += 1
+            csv_bytes = output.getvalue().encode("utf-8-sig")
+            csv_file = io.BytesIO(csv_bytes)
+            csv_file.name = f"mijozlar_bazasi_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+            await bot_client.send_file(
+                event.chat_id,
+                csv_file,
+                caption=f"📊 **Mijozlar CRM Bazasi Eksporti ({idx - 1} ta)**\nExcel yoki Google Sheets orqali ochishingiz mumkin!",
+            )
+            return
+
+        if cmd in ("/proposal", "/taklif", "/narxlar"):
+            proposal_text = (
+                "💼 **TIJORIY TAKLIF VA XIZMATLAR PAKETI**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "🔹 **1. START LANDING PAGE**\n"
+                "• Bir sahifali zamonaviy sayt (Restoran menyusi, Go'zallik saloni, Shifokor, Xizmatlar)\n"
+                "• Mobil telefonlarga 100% moslashuv\n"
+                "• Telegram orqali to'g'ridan-to'g'ri buyurtma tushishi\n"
+                "• Google Maps va Yandex Xaritalarga joylashtirish\n"
+                "💰 **Narxi:** $100 – $150 (3–5 kunda tayyor)\n\n"
+                "🔹 **2. BIZNES / KORPORATIV SAYT**\n"
+                "• Ko'p sahifali to'liq kompaniya sayti\n"
+                "• Barcha xizmatlar, narxlar, jamoa va mijozlar fikrlari\n"
+                "• Qulay boshqaruv paneli (admin panel)\n"
+                "• Professional SEO optimizatsiya (Google qidiruvida birinchilarga chiqish)\n"
+                "💰 **Narxi:** $200 – $350 (7–10 kunda tayyor)\n\n"
+                "🔹 **3. ONLINE KATALOG / DO'KON**\n"
+                "• Barcha mahsulotlar rasmi, narxi, filtri va savatcha (korzinka)\n"
+                "• Telegram bot va CRM bilan to'liq avtomatik integratsiya\n"
+                "• To'lov tizimlari (Click, Payme) ulanishi\n"
+                "💰 **Narxi:** $400+ dan boshlab\n\n"
+                "🎁 **HAR BIR SAYT UCHUN SOVG'A:**\n"
+                "✅ 1 yillik bepul Domen va xavfsiz SSL sertifikat\n"
+                "✅ 1 oylik bepul texnik nazorat va yangilash\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "📞 **Aloqa:** Muhammadrizo (@mrizo_dev)"
+            )
+            await event.respond(proposal_text)
+            return
+
+        if cmd in ("/followup", "/eslatma"):
+            # Javob bermagan mijozlarni sanash
+            unresponded = [
+                (cid, v) for cid, v in ad_leads.items()
+                if cid != "contacted_phones" and isinstance(v, dict) and not v.get("agreed") and not v.get("followup_sent")
+            ]
+            if not unresponded:
+                await event.respond("✅ **Hozirda javob kutayotgan yoki eslatilmagan mijozlar yo'q!** Barcha mijozlar ko'rib chiqilgan.")
+            else:
+                await event.respond(
+                    f"⏳ **Hozirda {len(unresponded)} ta mijozdan javob kutilmoqda.**\n\n"
+                    f"Ularga 2-bosqichli muloyim eslatma yuborishni xohlaysizmi?",
+                    buttons=[
+                        [Button.inline(f"🚀 Barchasiga ({len(unresponded)} ta) Eslatma Yuborish", b"crm:followup_all")],
+                        [Button.inline("❌ Bekor qilish", b"m:crm")]
+                    ]
+                )
+            return
+
         if cmd in ("/help", "/yordam"):
             help_text = (
                 "ℹ️ **JARVIS Boshqaruv Boti Buyruqlari:**\n\n"
@@ -573,7 +653,11 @@ def register_bot_handlers(bot_client, user_client, ctx: dict):
         if nav:
             buttons.append(nav)
 
-        buttons.append([Button.inline("💼 'Mijozlar' Papkasiga Sinxronlash", b"m:sync")])
+        buttons.append([
+            Button.inline("📥 CSV Eksport", b"c:export"),
+            Button.inline("🔄 Eslatma", b"c:followup"),
+            Button.inline("💼 Papkaga Solish", b"m:sync")
+        ])
         buttons.append([Button.inline("🏠 Bosh menyu", b"m:home")])
 
         if is_edit:
@@ -921,6 +1005,92 @@ def register_bot_handlers(bot_client, user_client, ctx: dict):
                     f"❌ **Yuborishda xatolik:**\n`{err}`",
                     buttons=[[Button.inline("🔄 Qayta urinish", b"m:manual"), Button.inline("🏠 Menyu", b"m:home")]]
                 )
+            return
+
+        # CRM Eksport va Followup tugmalari
+        if data == "c:export":
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["#", "Ism / Biznes", "Telefon / Kontakt", "Sana", "Holati", "Soha", "Tushuntirilganmi"])
+            idx = 1
+            for cid, lead_data in ad_leads.items():
+                if cid == "contacted_phones" or not isinstance(lead_data, dict):
+                    continue
+                status_str = "Rozi bo'lgan 🔥" if lead_data.get("agreed") else ("Tushuntirilgan 💡" if lead_data.get("details_explained") else "Yuborilgan ⏳")
+                writer.writerow([
+                    idx,
+                    lead_data.get("title", ""),
+                    lead_data.get("target", cid),
+                    lead_data.get("sent_time", ""),
+                    status_str,
+                    lead_data.get("category", ""),
+                    "Ha" if lead_data.get("details_explained") else "Yo'q"
+                ])
+                idx += 1
+            csv_bytes = output.getvalue().encode("utf-8-sig")
+            csv_file = io.BytesIO(csv_bytes)
+            csv_file.name = f"mijozlar_bazasi_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+            await bot_client.send_file(
+                event.chat_id,
+                csv_file,
+                caption=f"📊 **Mijozlar CRM Bazasi Eksporti ({idx - 1} ta)**\nExcel yoki Google Sheets orqali ochishingiz mumkin!",
+            )
+            await event.answer("✅ Baza yuklab berildi!")
+            return
+
+        if data == "c:followup":
+            unresponded = [
+                (cid, v) for cid, v in ad_leads.items()
+                if cid != "contacted_phones" and isinstance(v, dict) and not v.get("agreed") and not v.get("followup_sent")
+            ]
+            if not unresponded:
+                await event.answer("✅ Hozirda eslatilmagan mijozlar yo'q!", alert=True)
+            else:
+                await safe_edit(
+                    event,
+                    f"⏳ **Hozirda {len(unresponded)} ta mijozdan javob kutilmoqda.**\n\n"
+                    f"Ularga 2-bosqichli muloyim eslatma yuborilsinmi?",
+                    buttons=[
+                        [Button.inline(f"🚀 Barchasiga ({len(unresponded)} ta) Yuborish", b"crm:followup_all")],
+                        [Button.inline("⬅️ CRM ga qaytish", b"m:crm")]
+                    ]
+                )
+            return
+
+        if data == "crm:followup_all":
+            await event.answer("🔄 Eslatmalar yuborilmoqda...")
+            unresponded = [
+                (cid, v) for cid, v in ad_leads.items()
+                if cid != "contacted_phones" and isinstance(v, dict) and not v.get("agreed") and not v.get("followup_sent")
+            ]
+            if not unresponded:
+                await safe_edit(event, "✅ Hozirda eslatilmagan mijozlar yo'q.", buttons=[[Button.inline("👥 CRM", b"m:crm")]])
+                return
+
+            sent_count = 0
+            for cid, lead in unresponded[:10]:
+                biz_name = lead.get("title") or "sizning biznesingiz"
+                followup_msg = (
+                    f"Assalomu alaykum! Kecha \"{biz_name}\" bo'yicha yozgan edim, xabarni ko'ra oldingizmi?\n\n"
+                    f"Agar savollaringiz bo'lsa yoki veb-sayt qanday bo'lishini ko'rmoqchi bo'lsangiz, bemalol so'rashingiz mumkin. Bitta bepul namuna qilib ko'rsatsam maylimi?"
+                )
+                try:
+                    target = lead.get("target") or cid
+                    await ctx["send_to_recipient"](target, followup_msg)
+                    lead["followup_sent"] = True
+                    sent_count += 1
+                    await asyncio.sleep(random.uniform(4.0, 7.0))
+                except Exception:
+                    continue
+
+            ctx["save_ad_leads"](ad_leads)
+            await safe_edit(
+                event,
+                f"✅ **{sent_count} ta mijozga 2-bosqichli eslatma yuborildi!**\nBaza yangilandi.",
+                buttons=[[Button.inline("👥 CRM ga qaytish", b"m:crm"), Button.inline("🏠 Bosh menyu", b"m:home")]]
+            )
             return
 
         # CRM list pagination & filtering

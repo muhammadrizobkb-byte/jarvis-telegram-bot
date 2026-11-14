@@ -801,6 +801,20 @@ def is_refusal_message(text: str) -> bool:
     ]
     return any(p in t for p in refusal_patterns)
 
+def is_objection(text: str) -> bool:
+    """Mijoz e'tiroz yoki ikkilanish bildirayotganini aniqlaydi (qimmat, instagram bor, vaqtim yo'q)"""
+    t = _normalize_uz_text(text)
+    if not t or is_refusal_message(t):
+        return False
+    objection_patterns = [
+        "qimmat", "arzon", "puli kop", "puli ko'p", "mablag", "byudjet",
+        "instagram", "insta", "telegram kanal", "tg kanal", "instagramim",
+        "vaqt yoq", "vaqtim yo'q", "vaqtimiz yo'q", "keyinroq", "hozir emas", "hozircha emas",
+        "kerak emas hozir", "o'ylab ko'ramiz", "oylab koramiz", "maslahatlash", "sherigim",
+        "дорого", "нет времени", "позже", "инстаграм есть", "подумаем"
+    ]
+    return any(p in t for p in objection_patterns)
+
 def is_detail_question(text: str) -> bool:
     """Mijoz 'nimalar qilib bera olasiz', 'batafsil tushuntiring', 'narxi qancha' deb so'rayotganini aniqlaydi"""
     t = _normalize_uz_text(text)
@@ -1444,11 +1458,31 @@ async def handle_incoming_client_reply(event):
     text = (event.message.message or "").strip()
     has_media = bool(event.message.media)
 
+    # 🎙️ Ovozli xabarlar (Voice / Audio) qabul qilish va Gemini AI bilan transkripsiya
+    is_voice = bool(getattr(event.message, "voice", False) or getattr(event.message, "audio", False))
+    voice_transcript = None
+    if is_voice:
+        try:
+            voice_bytes = await event.message.download_media(file=bytes)
+            if voice_bytes:
+                audio_part = types.Part.from_bytes(data=voice_bytes, mime_type="audio/ogg")
+                prompt_transcribe = (
+                    "Bu mijozdan kelgan audio/ovozli xabar. "
+                    "Faqat va faqat uning aytgan so'zlarini o'zbek tilida aniq transkripsiya qilib yozib ber (hech qanday qo'shimcha so'zsiz):"
+                )
+                vt = await call_gemini([audio_part, prompt_transcribe], system_instruction="Sen aniq audio transkripsiya AI tizimisan.")
+                if vt and len(vt.strip()) > 1:
+                    voice_transcript = vt.strip()
+                    text = voice_transcript
+                    log_event("🎙️ OVOZ TUSHUNILDI", str(event.chat_id), "[bright_cyan]AUDIO[/bright_cyan]", f"'{voice_transcript[:35]}...'")
+        except Exception as _ve:
+            log_event("⚠️ OVOZ XATOSI", str(event.chat_id), "[yellow]WARN[/yellow]", str(_ve))
+
     if sender_id not in ad_leads:
         sender_phone_plus = f"+{sender.phone}" if getattr(sender, "phone", None) else ""
         contacted_list = ad_leads.get("contacted_phones", [])
         was_contacted = bool(sender_phone_plus and sender_phone_plus in contacted_list)
-        if was_contacted or is_positive_interest(text) or is_detail_question(text):
+        if was_contacted or is_positive_interest(text) or is_detail_question(text) or is_objection(text) or is_voice:
             ad_leads[sender_id] = {
                 "target": sender_phone_plus if sender_phone_plus else (f"@{sender.username}" if sender.username else sender.first_name),
                 "title": sender.first_name or "Mijoz",
@@ -1574,6 +1608,45 @@ async def handle_incoming_client_reply(event):
             await event.reply(welcome_reply)
 
         log_event("🔥 ROZILIK (HA!)", str(event.chat_id), "[bold bright_green]YANGI MIJOZ ✅[/bold bright_green]", f"Mijoz 'HA' dedi: '{text[:20]}...'")
+        return
+
+    # 3.5-HOLAT: Mijoz e'tiroz yoki ikkilanish bildirsa (qimmat, instagram bor, vaqtim yo'q, o'ylab ko'ramiz)
+    if config_state.get("auto_reply", True) and is_objection(text) and not lead.get("objection_handled"):
+        async with client.action(event.chat_id, "typing"):
+            await asyncio.sleep(2)
+            lead_cat = lead.get("category", "")
+            try:
+                objection_prompt = (
+                    f"Mijozning biznesi: '{target_name}' (sohasi: '{lead_cat or 'biznes'}').\n"
+                    f"Mijoz shunday e'tiroz / ikkilanish bildirdi: '{text}'.\n"
+                    f"Sening vazifang — tirik mutaxassis Muhammadrizo nomidan xushmuomala, professional va e'tirozni yopuvchi javob yozish:\n"
+                    f"1. Uning fikrini to'g'ri deb qabul qil (empatiya bildir).\n"
+                    f"2. Saytning aynan shu muammoga yechim ekanini tushuntir (agar Instagram bo'lsa — sayt Instagram bilan birga qanday qilib buyurtmalarni 2x oshirishini; agar qimmat desa — sayt 24/7 ishlovchi virtual sotuvchi ekanini; agar vaqt bo'lmasa — barcha ishni sen o'zing tayyorlab berishingni).\n"
+                    f"3. Hech qanday majburiyat yuklamaydigan yumshoq taklif ber (masalan: bitta bepul namunasini ko'rsatishni).\n"
+                    f"Maksimal 3-4 gap bo'lsin, tabiiy o'zbek tilida."
+                )
+                reply_text = await call_gemini(objection_prompt, chat_id=None, system_instruction=CLIENT_SALES_SYSTEM_PROMPT)
+            except Exception:
+                reply_text = (
+                    "Fikringizni juda yaxshi tushunaman.\n\n"
+                    "Lekin qarang, bu sizga hech qanday majburiyat yuklamaydi. Sizdan ortiqcha vaqt yoki katta mablag' ham talab qilinmaydi. "
+                    "Men shunchaki ishingizga mos bitta bepul namuna tayyorlab ko'rsataman — yoqsa gaplashamiz, yoqmasa hech qisi yo'q. Qani, bitta ko'rib chiqing?"
+                )
+
+            await event.reply(reply_text)
+            lead["objection_handled"] = True
+            save_ad_leads(ad_leads)
+
+            alert_msg = (
+                f"💬 **MIJOZ E'TIROZ / IKKILANISH BILDIRDI:**\n"
+                f"👤 **Mijoz:** `{lead.get('target', sender_id)}` ({target_name})\n"
+                f"🗣️ **Xabari:** \"{text}\"\n"
+                f"✅ **AI professional javob berdi va e'tirozni yopdi!**"
+            )
+            await client.send_message('me', alert_msg)
+            if bot_ctx.get("notify_bot_owner"):
+                await bot_ctx["notify_bot_owner"](alert_msg)
+            log_event("💬 E'TIROZ YOPILDI", str(event.chat_id), "[bold bright_green]AI JAVOB ✅[/bold bright_green]", f"'{text[:22]}...'")
         return
 
     # 4-HOLAT: Mijoz rad etsa ("kerakmas", "yo'q", "rahmat")
@@ -1767,6 +1840,9 @@ async def start_controller_bot(token: str, me):
                 BotCommand(command="start", description="🚀 Asosiy boshqaruv paneli"),
                 BotCommand(command="reklama", description="📢 Google Maps qidiruv & reklama"),
                 BotCommand(command="mijozlar", description="👥 Mijozlar CRM bazasi"),
+                BotCommand(command="export", description="📥 Excel / CSV bazani yuklash"),
+                BotCommand(command="followup", description="🔄 Javob bermaganlarga eslatma"),
+                BotCommand(command="proposal", description="💼 Tijoriy taklif & narxlar"),
                 BotCommand(command="status", description="📊 Tizim va server holati"),
                 BotCommand(command="sozlamalar", description="⚙️ Hudud va oraliq sozlamalari"),
                 BotCommand(command="stop", description="🛑 Faol qidiruvni to'xtatish"),
